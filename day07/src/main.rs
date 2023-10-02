@@ -62,7 +62,7 @@ where
 
 /// CLI usage: cargo run -- input.txt
 fn main() {
-    let filename = env::args().nth(1).expect("missing input file");
+    let filename = env::args().nth(1).expect("Missing input file");
 
     let num_by_pos: BTreeMap<u16, u32> =
         io::BufReader::new(File::open(filename).expect("File not found"))

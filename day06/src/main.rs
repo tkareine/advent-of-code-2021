@@ -56,7 +56,7 @@ impl FishSwarm {
 
 /// CLI usage: cargo run -- input.txt
 fn main() {
-    let filename = env::args().nth(1).expect("missing input file");
+    let filename = env::args().nth(1).expect("Missing input file");
 
     let swarm: FishSwarm = {
         let timers: Vec<u8> = io::BufReader::new(File::open(filename).expect("File not found"))

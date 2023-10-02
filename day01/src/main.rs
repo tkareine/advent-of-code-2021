@@ -23,11 +23,11 @@ impl CountIncreases for [u16] {
 
 /// CLI usage: cargo run -- input.txt
 fn main() {
-    let filename = env::args().nth(1).expect("missing input file");
+    let filename = env::args().nth(1).expect("Missing input file");
 
-    let lines: Vec<u16> = io::BufReader::new(File::open(filename).expect("file not found"))
+    let lines: Vec<u16> = io::BufReader::new(File::open(filename).expect("File not found"))
         .lines()
-        .map(|l| l.expect("line not UTF-8").parse().expect("line not u16"))
+        .map(|l| l.expect("Line not UTF-8").parse().expect("Line not u16"))
         .collect();
 
     let count_increases_by_groups1 = lines.count_increases();
@@ -48,11 +48,11 @@ mod tests {
 
     #[test]
     fn test_empty() {
-        assert_eq!(vec![].count_increases(), 0);
+        assert_eq!([].count_increases(), 0);
     }
 
     #[test]
     fn test_nonempty() {
-        assert_eq!(vec![42, 41, 43, 40, 41, 45].count_increases(), 3);
+        assert_eq!([42, 41, 43, 40, 41, 45].count_increases(), 3);
     }
 }

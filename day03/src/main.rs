@@ -69,20 +69,20 @@ where
         safe_idx = i.checked_sub(1);
     }
 
-    assert!(filtered.len() == 1, "not found");
+    assert!(filtered.len() == 1, "Not found");
 
     filtered[0].as_bitslice().load::<usize>()
 }
 
 /// CLI usage: cargo run -- input.txt
 fn main() {
-    let filename = env::args().nth(1).expect("missing input file");
+    let filename = env::args().nth(1).expect("Missing input file");
 
     let diagnostics: Vec<DiagnosticsBitArray> =
-        io::BufReader::new(File::open(filename).expect("file not found"))
+        io::BufReader::new(File::open(filename).expect("File not found"))
             .lines()
             .map(|l| {
-                parse_diagnostics_line(&l.expect("line not UTF-8")).expect("invalid diagnostics")
+                parse_diagnostics_line(&l.expect("Line not UTF-8")).expect("Invalid diagnostics")
             })
             .collect();
 

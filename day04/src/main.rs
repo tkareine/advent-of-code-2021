@@ -6,7 +6,7 @@ use std::ops::{Index, IndexMut};
 
 fn parse_draws(line: &str) -> Vec<u8> {
     line.split(',')
-        .map(|s| s.trim().parse::<u8>().expect("invalid number to draw"))
+        .map(|s| s.trim().parse::<u8>().expect("Invalid number to draw"))
         .collect()
 }
 
@@ -131,7 +131,7 @@ fn parse_bingo_line(line: &str) -> BingoLine {
     for (idx, c) in line.split_ascii_whitespace().take(BINGO_COLS).enumerate() {
         let n = c.parse::<u8>().ok();
         if n.is_none() {
-            panic!("invalid number as bingo input: {}", c)
+            panic!("Invalid number as bingo input: {}", c)
         }
         res[idx] = n;
         num_nums += 1;
@@ -192,11 +192,11 @@ fn draw_first_and_last_bingo(draws: Vec<u8>, bbs: Vec<BingoBoard>) -> FirstAndLa
 
 /// CLI usage: cargo run -- input.txt
 fn main() {
-    let filename = env::args().nth(1).expect("missing input file");
+    let filename = env::args().nth(1).expect("Missing input file");
 
-    let lines: Vec<String> = io::BufReader::new(File::open(filename).expect("file not found"))
+    let lines: Vec<String> = io::BufReader::new(File::open(filename).expect("File not found"))
         .lines()
-        .map(|l| l.expect("line not UTF-8"))
+        .map(|l| l.expect("Line not UTF-8"))
         .filter(|l| !l.is_empty())
         .collect();
 

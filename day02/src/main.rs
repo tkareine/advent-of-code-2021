@@ -43,15 +43,15 @@ fn parse_movement(input: &str) -> IResult<&str, Movement> {
 
 /// CLI usage: cargo run -- input.txt
 fn main() {
-    let filename = env::args().nth(1).expect("missing input file");
+    let filename = env::args().nth(1).expect("Missing input file");
 
     let movements: Vec<Movement> =
-        io::BufReader::new(File::open(filename).expect("file not found"))
+        io::BufReader::new(File::open(filename).expect("File not found"))
             .lines()
             .map(|l| {
-                parse_movement(&l.expect("line not UTF-8"))
+                parse_movement(&l.expect("Line not UTF-8"))
                     .finish()
-                    .expect("unknown movement")
+                    .expect("Unknown movement")
                     .1
             })
             .collect();
