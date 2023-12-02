@@ -207,7 +207,7 @@ impl TryFrom<Vec<CaveLink>> for CaveGraph {
     }
 }
 
-/// CLI usage: cargo run -- input.txt
+/// CLI usage: cargo run --release -- input.txt
 fn main() {
     let filename = env::args().nth(1).expect("Missing input file");
 
