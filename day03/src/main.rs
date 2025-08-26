@@ -8,6 +8,7 @@ const DIAGNOSTIC_BIT_LEN: usize = 12;
 
 type DiagnosticsBitArray = bv::BitArr!(for DIAGNOSTIC_BIT_LEN);
 
+#[allow(dead_code)]
 #[derive(Debug)]
 enum Error {
     InvalidDiagnosticLineLength(usize),

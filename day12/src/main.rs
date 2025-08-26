@@ -7,6 +7,7 @@ use std::ptr;
 use std::rc::Rc;
 use std::str::FromStr;
 
+#[allow(dead_code)]
 #[derive(Debug)]
 enum ParseCaveGraphError {
     UnexpectedNumNodesInLink(usize),

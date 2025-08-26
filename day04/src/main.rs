@@ -46,7 +46,7 @@ impl BingoBoard {
         draw_hit
     }
 
-    fn numbers(&self) -> BingoNumbersIter {
+    fn numbers(&self) -> BingoNumbersIter<'_> {
         BingoNumbersIter {
             current_row: 0,
             current_col: 0,

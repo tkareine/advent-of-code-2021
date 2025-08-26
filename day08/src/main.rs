@@ -41,7 +41,7 @@ impl<'a> Signals<'a> {
         SignalPatterns::parse_patterns(self.patterns)?.parse_outputs(self.outputs)
     }
 
-    fn parse(line: &str) -> Result<Signals, ParseSignalsError> {
+    fn parse(line: &str) -> Result<Signals<'_>, ParseSignalsError> {
         let mut patterns: Vec<&str> = vec![];
         let mut outputs: Vec<&str> = vec![];
         let mut read_outputs = false;

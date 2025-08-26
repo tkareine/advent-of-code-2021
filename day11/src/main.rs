@@ -5,6 +5,7 @@ use std::io::{self, BufRead};
 use std::ops::{Index, IndexMut};
 use std::str::FromStr;
 
+#[allow(dead_code)]
 #[derive(Debug)]
 enum ParseOctopusMapError {
     EnergyLevel(char),
