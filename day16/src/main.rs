@@ -1,7 +1,7 @@
 use std::env;
 use std::fmt;
 use std::fs::File;
-use std::io::{self, BufRead};
+use std::io;
 use std::ops::Range;
 
 #[derive(Copy, Clone, fmt::Debug)]
@@ -14,63 +14,76 @@ impl From<u8> for Hex {
     }
 }
 
-/// Smart pointer to a buffer of [`Hex`]es, providing a view to the data
-#[derive(fmt::Debug)]
-struct HexBits<'a> {
-    bits_start_offset: u8,
-    hexes: &'a [Hex],
+#[inline]
+fn bits_in_byte() -> usize {
+    u8::BITS as usize
 }
 
-impl<'a> HexBits<'a> {
-    fn value_at(&self, index: Range<usize>) -> Option<u64> {
-        let index = Range {
-            start: index.start + self.bits_start_offset as usize,
-            end: index.end + self.bits_start_offset as usize,
+/// Smart pointer to a buffer of bytes, providing a view to the data
+#[derive(fmt::Debug)]
+struct ByteBits<'a> {
+    bits_start_offset: u8,
+    bytes: &'a [u8],
+}
+
+impl<'a> ByteBits<'a> {
+    fn value_at(&self, range: Range<usize>) -> Option<u64> {
+        let range = Range {
+            start: range.start + self.bits_start_offset as usize,
+            end: range.end + self.bits_start_offset as usize,
         };
 
-        let last_hex_idx = (index.end - 1) / 4;
+        let last_byte_idx = (range.end - 1) / bits_in_byte();
 
-        if last_hex_idx >= self.hexes.len() {
+        if last_byte_idx >= self.bytes.len() {
             return None;
         }
 
-        let start_hex_idx = index.start / 4;
-        let mut curr_hex_idx = start_hex_idx;
+        let start_byte_idx = range.start / bits_in_byte();
+        let mut curr_byte_idx = start_byte_idx;
 
         let mut result = 0u64;
 
-        while curr_hex_idx <= last_hex_idx {
-            let hex = self.hexes[curr_hex_idx];
+        while curr_byte_idx <= last_byte_idx {
+            let byte = self.bytes[curr_byte_idx];
 
-            let (bits, bits_len) = if curr_hex_idx == last_hex_idx {
-                // Hex element in the end
-                let mask_start_pos = if curr_hex_idx == start_hex_idx {
-                    index.start % 4
+            let (bits, bits_len) = {
+                // Byte element in the end (which can be the sole element)
+                if curr_byte_idx == last_byte_idx {
+                    let mask_start_pos = if curr_byte_idx == start_byte_idx {
+                        range.start % bits_in_byte()
+                    } else {
+                        0
+                    };
+                    let mask_end_pos = match range.end % bits_in_byte() {
+                        0 => bits_in_byte(),
+                        i => i,
+                    };
+                    let mask_len = mask_end_pos - mask_start_pos;
+                    let bits = if mask_len == bits_in_byte() {
+                        byte
+                    } else {
+                        (byte >> (bits_in_byte() - mask_end_pos)) & ((1u8 << mask_len) - 1)
+                    };
+                    (bits, mask_len)
+                // Byte element at the start
+                } else if curr_byte_idx == start_byte_idx {
+                    let mask_len = bits_in_byte() - range.start % bits_in_byte();
+                    let bits = if mask_len == bits_in_byte() {
+                        byte
+                    } else {
+                        byte & ((1u8 << mask_len) - 1)
+                    };
+                    (bits, mask_len)
+                // Byte element in the middle
                 } else {
-                    0
-                };
-                let mask_end_pos = match index.end % 4 {
-                    0 => 4,
-                    i => i,
-                };
-                let mask_len = mask_end_pos - mask_start_pos;
-                let bits = (hex.0 >> (4 - mask_end_pos)) & ((1u8 << mask_len) - 1);
-                (bits, mask_len)
-            } else if curr_hex_idx == start_hex_idx {
-                // Hex element at the start
-                let mask_len = 4 - index.start % 4;
-                let bits = hex.0 & ((1u8 << mask_len) - 1);
-                (bits, mask_len)
-            } else {
-                // Hex element in the middle
-                let mask_len = 4;
-                let bits = hex.0 & ((1u8 << 4) - 1);
-                (bits, mask_len)
+                    (byte, bits_in_byte())
+                }
             };
 
             result = (result << bits_len) | (bits as u64);
 
-            curr_hex_idx += 1;
+            curr_byte_idx += 1;
         }
 
         // println!("value_at> result={result} ({result:#b})");
@@ -78,25 +91,25 @@ impl<'a> HexBits<'a> {
         Some(result)
     }
 
-    fn shift_right(&self, n: usize) -> Option<HexBits<'a>> {
+    fn shift_right(&self, n: usize) -> Option<ByteBits<'a>> {
         let n = (self.bits_start_offset as usize) + n;
-        let hex_idx = n / 4;
-        if hex_idx >= self.hexes.len() {
+        let byte_idx = n / bits_in_byte();
+        if byte_idx >= self.bytes.len() {
             None
         } else {
-            Some(HexBits {
-                bits_start_offset: (n % 4) as u8,
-                hexes: &self.hexes[hex_idx..],
+            Some(ByteBits {
+                bits_start_offset: (n % bits_in_byte()) as u8,
+                bytes: &self.bytes[byte_idx..],
             })
         }
     }
 }
 
-impl<'a> From<&'a [Hex]> for HexBits<'a> {
-    fn from(value: &'a [Hex]) -> Self {
-        HexBits {
+impl<'a> From<&'a [u8]> for ByteBits<'a> {
+    fn from(value: &'a [u8]) -> Self {
+        ByteBits {
             bits_start_offset: 0,
-            hexes: value,
+            bytes: value,
         }
     }
 }
@@ -168,24 +181,35 @@ fn byte_to_hex(b: u8) -> Result<Hex, ReadPacketError> {
 }
 
 impl Packet {
-    fn read(reader: impl BufRead) -> Result<Packet, ReadPacketError> {
-        let bytes = reader
-            .bytes()
-            .map(|b| b.map_err(ReadPacketError::ReadFailure))
-            .collect::<Result<Vec<u8>, ReadPacketError>>()?;
+    fn read(reader: impl io::BufRead) -> Result<Packet, ReadPacketError> {
+        let mut bytes = Vec::<u8>::new();
+        let mut curr_byte: Option<u8> = None;
+        let mut is_even_hex_pos = true;
 
-        let hexes = bytes
-            .into_iter()
-            .filter_map(|b| {
-                if b.is_ascii_whitespace() {
-                    None
-                } else {
-                    Some(byte_to_hex(b))
-                }
-            })
-            .collect::<Result<Vec<Hex>, ReadPacketError>>()?;
+        for b in reader.bytes() {
+            let b = b.map_err(ReadPacketError::ReadFailure)?;
 
-        read_packet(hexes[..].into()).map(|(p, _)| p)
+            if b.is_ascii_whitespace() {
+                continue;
+            }
+
+            let h = byte_to_hex(b)?;
+
+            if is_even_hex_pos {
+                curr_byte = Some(h.0 << 4);
+            } else {
+                bytes.push(curr_byte.unwrap() | h.0);
+                curr_byte = None;
+            }
+
+            is_even_hex_pos = !is_even_hex_pos;
+        }
+
+        if let Some(b) = curr_byte {
+            bytes.push(b);
+        }
+
+        read_packet(bytes[..].into()).map(|(p, _)| p)
     }
 
     fn sum_versions(&self) -> u64 {
@@ -236,36 +260,36 @@ impl Packet {
     }
 }
 
-fn read_packet(hex_bits: HexBits) -> Result<(Packet, usize), ReadPacketError> {
-    let packet_version = hex_bits
+fn read_packet(byte_bits: ByteBits) -> Result<(Packet, usize), ReadPacketError> {
+    let packet_version = byte_bits
         .value_at(0..3)
         .ok_or(ReadPacketError::IncompleteEncoding)? as u8;
 
-    let packet_type = hex_bits
+    let packet_type = byte_bits
         .value_at(3..6)
         .ok_or(ReadPacketError::IncompleteEncoding)? as u8;
 
-    let hex_bits = hex_bits
+    let byte_bits = byte_bits
         .shift_right(6)
         .ok_or(ReadPacketError::IncompleteEncoding)?;
 
     let (packet_payload, payload_len) = if packet_type == LITERAL_PACKET_TYPE_ID {
-        read_literal_value(hex_bits).map(|(value, len)| (PacketPayload::Literal { value }, len))
+        read_literal_value(byte_bits).map(|(value, len)| (PacketPayload::Literal { value }, len))
     } else {
         let op_kind = OperatorKind::read(packet_type)
             .unwrap_or_else(|| panic!("Unexpected packet type: {}", packet_type));
 
-        let length_type = hex_bits
+        let length_type = byte_bits
             .value_at(0..1)
             .ok_or(ReadPacketError::IncompleteEncoding)?;
 
-        let hex_bits = hex_bits
+        let byte_bits = byte_bits
             .shift_right(1)
             .ok_or(ReadPacketError::IncompleteEncoding)?;
 
         match length_type {
-            0 => read_packets_by_total_len(hex_bits),
-            _ => read_packets_by_num_packets(hex_bits),
+            0 => read_packets_by_total_len(byte_bits),
+            _ => read_packets_by_num_packets(byte_bits),
         }
         .map(|(packets, len)| {
             let pp = PacketPayload::Operator {
@@ -284,18 +308,18 @@ fn read_packet(hex_bits: HexBits) -> Result<(Packet, usize), ReadPacketError> {
     Ok((packet, 6 + payload_len))
 }
 
-fn read_literal_value(hex_bits: HexBits) -> Result<(u64, usize), ReadPacketError> {
+fn read_literal_value(byte_bits: ByteBits) -> Result<(u64, usize), ReadPacketError> {
     let mut has_more = true;
     let mut value = 0u64;
     let mut idx = 0;
 
     while has_more {
-        has_more = hex_bits
+        has_more = byte_bits
             .value_at(idx..idx + 1)
             .ok_or(ReadPacketError::IncompleteEncoding)?
             > 0;
 
-        let v = hex_bits
+        let v = byte_bits
             .value_at(idx + 1..idx + 5)
             .ok_or(ReadPacketError::IncompleteEncoding)?;
 
@@ -307,8 +331,8 @@ fn read_literal_value(hex_bits: HexBits) -> Result<(u64, usize), ReadPacketError
     Ok((value, idx))
 }
 
-fn read_packets_by_total_len(hex_bits: HexBits) -> Result<(Vec<Packet>, usize), ReadPacketError> {
-    let total_len = hex_bits
+fn read_packets_by_total_len(byte_bits: ByteBits) -> Result<(Vec<Packet>, usize), ReadPacketError> {
+    let total_len = byte_bits
         .value_at(0..15)
         .ok_or(ReadPacketError::IncompleteEncoding)? as usize
         + 15;
@@ -319,7 +343,7 @@ fn read_packets_by_total_len(hex_bits: HexBits) -> Result<(Vec<Packet>, usize), 
 
     while next_packet_idx < total_len {
         let (p, p_len) = read_packet(
-            hex_bits
+            byte_bits
                 .shift_right(next_packet_idx)
                 .ok_or(ReadPacketError::IncompleteEncoding)?,
         )?;
@@ -330,8 +354,10 @@ fn read_packets_by_total_len(hex_bits: HexBits) -> Result<(Vec<Packet>, usize), 
     Ok((packets, total_len))
 }
 
-fn read_packets_by_num_packets(hex_bits: HexBits) -> Result<(Vec<Packet>, usize), ReadPacketError> {
-    let total_num_packets = hex_bits
+fn read_packets_by_num_packets(
+    byte_bits: ByteBits,
+) -> Result<(Vec<Packet>, usize), ReadPacketError> {
+    let total_num_packets = byte_bits
         .value_at(0..11)
         .ok_or(ReadPacketError::IncompleteEncoding)? as usize;
 
@@ -341,7 +367,7 @@ fn read_packets_by_num_packets(hex_bits: HexBits) -> Result<(Vec<Packet>, usize)
 
     for _ in 0..total_num_packets {
         let (p, p_len) = read_packet(
-            hex_bits
+            byte_bits
                 .shift_right(next_packet_idx)
                 .ok_or(ReadPacketError::IncompleteEncoding)?,
         )?;
@@ -356,7 +382,7 @@ fn read_packets_by_num_packets(hex_bits: HexBits) -> Result<(Vec<Packet>, usize)
 fn main() {
     let filename = env::args().nth(1).expect("Missing input file");
 
-    let packet = Packet::read(&mut io::BufReader::new(
+    let packet = Packet::read(io::BufReader::new(
         File::open(filename).expect("File not found"),
     ))
     .expect("Failed to read packet");
@@ -369,105 +395,107 @@ fn main() {
 mod tests {
     use super::*;
 
-    macro_rules! hex_bits_test {
-        ($name:ident offset: $bits_start_offset:expr , hexes: $hexes:expr , index: $value_index:expr , expect_value: $expected_value:expr) => {
+    macro_rules! byte_bits_test {
+        ($name:ident offset: $bits_start_offset:expr , bytes: $bytes:expr , range: $value_range:expr , expected_value: $expected_value:expr) => {
             #[test]
             fn $name() {
-                let hs: Vec<Hex> = $hexes.into_iter().map(|h| h.into()).collect();
-
-                let hex_bits = HexBits {
+                let byte_bits = ByteBits {
                     bits_start_offset: $bits_start_offset,
-                    hexes: &hs,
+                    bytes: &$bytes,
                 };
 
-                let actual_value = hex_bits.value_at($value_index);
+                let actual_value = byte_bits.value_at($value_range);
 
                 assert_eq!(actual_value, $expected_value);
             }
         };
     }
 
-    hex_bits_test!(
-        hex_bits_offset_0_from_0_to_4
+    byte_bits_test!(
+        byte_bits_offset_0_from_0_to_8
         offset: 0,
-        hexes: vec![0b1011u8],
-        index: 0..4,
-        expect_value: Some(0b1011)
+        bytes: [0b10110001u8],
+        range: 0..8,
+        expected_value: Some(0b10110001)
     );
 
-    hex_bits_test!(
-        hex_bits_offset_0_from_0_to_3
+    byte_bits_test!(
+        byte_bits_offset_0_from_0_to_5
         offset: 0,
-        hexes: vec![0b1101u8],
-        index: 0..3,
-        expect_value: Some(0b110)
+        bytes: [0b11001000u8],
+        range: 0..5,
+        expected_value: Some(0b11001)
     );
 
-    hex_bits_test!(
-        hex_bits_offset_0_from_1_to_3
+    byte_bits_test!(
+        byte_bits_offset_0_from_2_to_7
         offset: 0,
-        hexes: vec![0b1101u8],
-        index: 1..3,
-        expect_value: Some(0b10)
+        bytes: [0b00110010u8],
+        range: 2..7,
+        expected_value: Some(0b11001)
     );
 
-    hex_bits_test!(
-        hex_bits_offset_0_from_1_to_4
+    byte_bits_test!(
+        byte_bits_offset_0_from_5_to_8
         offset: 0,
-        hexes: vec![0b1101u8],
-        index: 1..4,
-        expect_value: Some(0b101)
+        bytes: [0b10100101u8],
+        range: 5..8,
+        expected_value: Some(0b101)
     );
 
-    hex_bits_test!(
-        hex_bits_offset_0_from_2_to_6
+    byte_bits_test!(
+        byte_bits_offset_0_from_8_to_16
         offset: 0,
-        hexes: vec![0b1110u8, 0b1011u8],
-        index: 2..6,
-        expect_value: Some(0b1010)
+        bytes: [0b00000000u8, 0b11100001u8],
+        range: 8..16,
+        expected_value: Some(0b11100001)
     );
 
-    hex_bits_test!(
-        hex_bits_offset_0_from_3_to_9
+    byte_bits_test!(
+        byte_bits_offset_0_from_6_to_12
         offset: 0,
-        hexes: vec![0b1101u8, 0b1001u8, 0b0111u8],
-        index: 3..9,
-        expect_value: Some(0b110010)
+        bytes: [0b00000010u8, 0b01010000u8],
+        range: 6..12,
+        expected_value: Some(0b100101)
     );
 
-    hex_bits_test!(
-        hex_bits_offset_1_from_2_to_8
+    byte_bits_test!(
+        byte_bits_offset_0_from_0_to_9
+        offset: 0,
+        bytes: [0b10110001u8, 0b10000001u8],
+        range: 0..9,
+        expected_value: Some(0b101100011)
+    );
+
+    byte_bits_test!(
+        byte_bits_offset_1_from_2_to_8
         offset: 1,
-        hexes: vec![0b1101u8, 0b1001u8, 0b0111u8],
-        index: 2..8,
-        expect_value: Some(0b110010)
+        bytes: [0b11011001u8, 0b01110000u8],
+        range: 2..8,
+        expected_value: Some(0b110010)
     );
 
-    hex_bits_test!(
-        hex_bits_offset_0_from_10_11
+    byte_bits_test!(
+        byte_bits_offset_0_from_6_to_7
         offset: 0,
-        hexes: vec![0b0000u8, 0b0000u8, 0b0010u8, 0b0000u8],
-        index: 10..11,
-        expect_value: Some(0b1)
+        bytes: [0b00000010u8, 0b00000000u8],
+        range: 6..7,
+        expected_value: Some(0b1)
     );
 
-    hex_bits_test!(
-        hex_bits_offset_2_from_10_11
+    byte_bits_test!(
+        byte_bits_offset_2_from_6_to_7
         offset: 2,
-        hexes: vec![0b0000u8, 0b0000u8, 0b0000u8, 0b1000u8],
-        index: 10..11,
-        expect_value: Some(0b1)
+        bytes: [0b00000000u8, 0b10000000u8],
+        range: 6..7,
+        expected_value: Some(0b1)
     );
 
     #[test]
-    fn hex_bits_shift_right() {
-        let hs: Vec<Hex> = vec![0b0000u8, 0b0010u8, 0b1000u8]
-            .into_iter()
-            .map(|h| h.into())
-            .collect();
-        let hex_bits: HexBits = (&hs[..]).into();
+    fn byte_bits_shift_right() {
+        let byte_bits: ByteBits = (&[0b00000010u8, 0b10000000u8][..]).into();
 
-        let actual_value = hex_bits
+        let actual_value = byte_bits
             .shift_right(3)
             .unwrap()
             .shift_right(2)
